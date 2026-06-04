@@ -1,4 +1,4 @@
-# CPE-453-Program-4
+# CSC-453-Program-4
 
 Question 1: Symlinks vs. Hard Links
 Explain the difference between a symbolic link and a hard link. Why can a symbolic link cause an infinite loop during directory traversal, but a hard link to a directory cannot? (Hint: think about what the operating system allows you to create.)
