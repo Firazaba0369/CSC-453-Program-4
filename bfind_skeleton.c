@@ -119,11 +119,53 @@ static const char *basename_of(const char *path) {
  */
 static bool filter_matches(const filter_t *f, const char *path,
                            const struct stat *sb) {
-    (void)f;
-    (void)path;
-    (void)sb;
     /* TODO: Your implementation here */
-    return false;
+    switch(f->kind){
+        case FILTER_NAME:{ // Compare filename
+            const char *path_filename = basename_of(path);
+            const char *pattern = f->filter.pattern;
+            if(fnmatch(pattern, path_filename, 0) == 0) return true;
+            return false;
+        }
+        case FILTER_TYPE:{ // Compare file type
+            char t = f->filter.type_char;
+            if(t == 'f' && S_ISREG(sb->st_mode)) return true;
+            if(t == 'd' && S_ISDIR(sb->st_mode)) return true;
+            if(t == 'l' && S_ISLNK(sb->st_mode)) return true;
+            return false;
+        }
+        case FILTER_MTIME:{ // Compare modification days
+            int days = f->filter.mtime_days;
+            double age_days = difftime(g_now, sb->st_mtime) / 86400.0;
+            if (age_days <= days) return true;
+            return false;
+        }
+        case FILTER_SIZE:{ // Compare file size
+            off_t offset = f->filter.size.size_bytes;
+            size_cmp_t cmp = f->filter.size.size_cmp;
+            if(cmp == SIZE_CMP_GREATER && sb->st_size > offset) return true;
+            if(cmp == SIZE_CMP_EXACT && sb->st_size == offset) return true;
+            if(cmp == SIZE_CMP_LESS && sb->st_size < offset) return true;
+            return false;
+        }
+        case FILTER_PERM:{ // Compare filter permissions
+            mode_t perm = f->filter.perm_mode; 
+            if((sb->st_mode & 07777) == perm) return true;
+            return false;
+        }
+        case FILTER_LINKS:{ // Compare hardlink count
+            nlink_t links = f->filter.nlinks;
+            if(sb->st_nlink == links) return true;
+            return false;
+        }
+        case FILTER_SAMEFILE:{ // Compare entries refering to the same inode
+            dev_ino_t file = f->filter.samefile;
+            if((sb->st_dev == file.dev) && (sb->st_ino == file.ino)) return true;
+            return false;
+        }
+        default: 
+            return false; // handle bad filter types
+    }
 }
 
 /* Check if ALL filters match (AND semantics).
