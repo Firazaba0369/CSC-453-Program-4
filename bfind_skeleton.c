@@ -356,9 +356,105 @@ static char **parse_args(int argc, char *argv[], int *npaths) {
  * The provided queue library (queue.h) implements a generic FIFO queue.
  */
 static void bfs_traverse(char **start_paths, int npaths) {
-    (void)start_paths;
-    (void)npaths;
-    /* TODO: Your implementation here */
+    if (npaths <= 0) return;
+
+    queue_t q;
+    queue_init(&q);
+
+    // Enqueue copies of start paths so we can free every dequeued path 
+    for (int i = 0; i < npaths; i++) {
+        queue_enqueue(&q, strdup(start_paths[i]));
+    }
+
+    dev_ino_t *visited = NULL;
+    size_t visited_size = 0;
+    size_t visited_capacity = 0;
+
+    while (!queue_is_empty(&q)) {
+        char *path = queue_dequeue(&q);
+        if (!path) continue;
+
+        struct stat sb;
+        // Use stat when following links (-L), otherwise lstat
+        int st_res = g_follow_links ? stat(path, &sb) : lstat(path, &sb);
+        if (st_res < 0) {
+            fprintf(stderr, "bfind: cannot stat '%s': %s\n", path, strerror(errno));
+            free(path);
+            continue;
+        }
+
+        if (matches_all_filters(path, &sb)) {
+            printf("%s\n", path);
+        }
+
+        // Only descend if it's a directory (-L)
+        if (S_ISDIR(sb.st_mode)) {
+            // -xdev: skip directories on different filesystems
+            if (g_xdev && sb.st_dev != g_start_dev) {
+                free(path);
+                continue;
+            }
+
+            // Cycle detection only applies when following links (-L)
+            if (g_follow_links) {
+                dev_ino_t current = { .dev = sb.st_dev, .ino = sb.st_ino };
+                bool already = false;
+                for (size_t j = 0; j < visited_size; j++) {
+                    if (visited[j].dev == current.dev && visited[j].ino == current.ino) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (already) {
+                    free(path);
+                    continue;
+                }
+                if (visited_size >= visited_capacity) {
+                    size_t newcap = visited_capacity ? visited_capacity * 2 : 64;
+                    dev_ino_t *tmp = realloc(visited, newcap * sizeof(dev_ino_t));
+                    if (!tmp) {
+                        fprintf(stderr, "bfind: out of memory\n");
+                        free(visited);
+                        free(path);
+                        break;
+                    }
+                    visited = tmp;
+                    visited_capacity = newcap;
+                }
+                visited[visited_size++] = current;
+            }
+
+            // Enqueue children
+            DIR *dir = opendir(path);
+            if (!dir) {
+                fprintf(stderr, "bfind: cannot open directory '%s': %s\n", path, strerror(errno));
+                free(path);
+                continue;
+            }
+
+            // For each entry, construct the full path and enqueue it
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                    continue;
+
+                size_t len = strlen(path) + 1 + strlen(entry->d_name) + 1;
+                char *child = malloc(len);
+                if (!child) {
+                    fprintf(stderr, "bfind: out of memory\n");
+                    continue;
+                }
+                snprintf(child, len, "%s/%s", path, entry->d_name);
+                queue_enqueue(&q, child);
+            }
+            closedir(dir);
+        }
+
+        free(path);
+    }
+
+    free(visited);
+    queue_destroy(&q);
 }
 
 /* ------------------------------------------------------------------ */
